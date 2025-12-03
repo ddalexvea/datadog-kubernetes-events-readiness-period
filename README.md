@@ -10,6 +10,7 @@ This lab demonstrates:
 * **Unbundled Events** configuration for granular event tracking
 * **Test Application** with configurable readiness probe to generate events
 * **Event timestamp verification** with different `periodSeconds` values
+* **Known Issue Reproduction** - Same timestamp bug on Agent v7.57.2
 
 ## 📋 Prerequisites
 
@@ -245,6 +246,71 @@ With `periodSeconds: 20` and pod in unhealthy state:
 | ~60 | Third Unhealthy event |
 | ... | Continues every 20s |
 
+## 🐛 Known Issue: Same Timestamp on Unbundled Events (Agent v7.57.2)
+
+### Issue Description
+
+When using **Datadog Agent v7.57.2** with `kubernetesEvents.unbundleEvents: true`, multiple unbundled events appear in Datadog with the **exact same timestamp**, even though they should have distinct timestamps based on `periodSeconds`.
+
+### Reproduction Steps
+
+1. **Install Datadog Agent v7.57.2** with unbundled events enabled:
+
+```yaml
+# datadog-values.yaml
+datadog:
+  site: "datadoghq.com"
+  apiKeyExistingSecret: "datadog-secret"
+  clusterName: "minikube"
+  kubelet:
+    tlsVerify: false
+  kubernetesEvents:
+    unbundleEvents: true
+
+agents:
+  image:
+    tag: 7.57.2
+
+clusterAgent:
+  image:
+    tag: 7.57.2
+```
+
+```bash
+helm install datadog-agent -f datadog-values.yaml datadog/datadog
+```
+
+2. **Deploy test application** with readiness probe (`periodSeconds: 20`):
+
+```bash
+kubectl apply -f test-app-pod.yaml
+```
+
+3. **Make the pod unhealthy** to generate events:
+
+```bash
+kubectl exec test-app -- rm /tmp/ready
+```
+
+4. **Wait 2-3 minutes** for multiple events to be generated
+
+5. **Check Datadog Events Explorer** - Filter by:
+   - `source:kubernetes`
+   - `reason:Unhealthy`
+   - `pod_name:test-app`
+
+### Expected vs Actual Behavior
+
+| Expected (Correct) | Actual (v7.57.2 Bug) |
+|--------------------|----------------------|
+| Event 1: 10:49:32 | Event 1: **10:49:52** |
+| Event 2: 10:49:52 | Event 2: **10:49:52** |
+| Event 3: 10:50:12 | Event 3: **10:49:52** |
+
+With `periodSeconds: 20`, each event should have a timestamp ~20 seconds apart. Instead, all unbundled events show the **same timestamp**.
+
+---
+
 ## 🔧 Troubleshooting
 
 ### Issue: Events Not Appearing in Datadog
@@ -259,14 +325,25 @@ With `periodSeconds: 20` and pod in unhealthy state:
 
 **Possible Causes:**
 1. `unbundleEvents` not enabled
-2. Older Datadog Agent version (upgrade to 7.60+)
+2. **Datadog Agent v7.57.2 bug** - See [Known Issue](#-known-issue-same-timestamp-on-unbundled-events-agent-v7572) above
 3. Cluster Agent event batching behavior
 
 **Solution:**
+1. Enable unbundled events:
 ```yaml
 datadog:
   kubernetesEvents:
     unbundleEvents: true
+```
+
+2. **Upgrade Agent to v7.60+ or latest**:
+```yaml
+agents:
+  image:
+    tag: 7.68.2
+clusterAgent:
+  image:
+    tag: 7.68.2
 ```
 
 ### Issue: Kubelet Connection Errors
