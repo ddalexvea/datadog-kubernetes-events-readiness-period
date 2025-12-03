@@ -1,0 +1,1 @@
+# datadog-kubernetes-events-readiness-period
